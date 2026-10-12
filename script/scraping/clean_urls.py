@@ -11,7 +11,7 @@ import re
 from pathlib import Path
 
 # ---------- CONFIG ----------
-INPUT  = Path("data/video_urls.txt")              # <-- your raw messy file
+INPUT  = Path("data/urls/video_urls.txt")
 OUTPUT = Path("data/raw/video_urls_clean.txt")
 OUTPUT.parent.mkdir(parents=True, exist_ok=True)
 

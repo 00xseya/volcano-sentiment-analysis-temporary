@@ -1,0 +1,5 @@
+Model,Accuracy,Macro_Precision,Macro_Recall,Macro_F1,F1_Positif,F1_Netral,F1_Negatif,Test_Fingerprint
+Dummy Random Baseline,0.4583,0.4591,0.4516,0.4528,0.45,0.3913,0.5172,884584a9
+Lexicon InSet/VADER Baseline,0.4167,0.4792,0.4434,0.4134,0.5,0.4545,0.2857,884584a9
+Indo-RoBERTa (Zero-Shot),0.4861,0.4741,0.4659,0.4656,0.4615,0.3415,0.5938,884584a9
+TF-IDF + LogReg (Supervised),0.6111,0.6202,0.6015,0.6072,0.65,0.5366,0.6349,884584a9

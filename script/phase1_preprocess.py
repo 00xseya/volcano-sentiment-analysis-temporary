@@ -22,6 +22,7 @@ SLANG_FILE = Path("data/raw/slang_dict.txt")
 
 # ---------- LOAD ----------
 df = pd.read_csv(IN)
+df["source_row"] = df.index
 print(f"Loaded {len(df)} comments")
 
 # ---------- 1. Load slang dictionary ----------
@@ -32,7 +33,7 @@ if SLANG_FILE.exists():
         if len(parts) == 2:
             slang[parts[0]] = parts[1]
         elif len(parts) == 1:
-            slang[parts[0]] = ""  # drop
+            slang[parts[0]] = parts[0]
 print(f"Loaded {len(slang)} slang mappings")
 
 # ---------- 2. Stopwords + stemmer ----------
@@ -174,7 +175,10 @@ df["token_count_heavy"] = df["tokens_heavy"].apply(len)
 df["tokens_light"] = df["tokens_light"].apply(lambda t: "|".join(t))
 df["tokens_heavy"] = df["tokens_heavy"].apply(lambda t: "|".join(t))
 
-df.to_csv(OUT, index=False, encoding="utf-8")
+cols = ["source_row"] + [c for c in df.columns if c != "source_row"]
+df = df[cols]
+
+df.to_csv(OUT, index=False, encoding="utf-8-sig")
 print(f"\nSaved -> {OUT}")
 
 # ---------- 8. Summary ----------

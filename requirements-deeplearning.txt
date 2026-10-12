@@ -1,0 +1,7 @@
+# Kebutuhan tambahan untuk model Deep Learning (IndoBERT fine-tuning)
+-r requirements.txt
+torch>=2.2.0
+transformers>=4.40.0
+datasets>=2.20.0
+accelerate>=0.30.0
+pyarrow>=15.0.0,<16.0.0

@@ -1,302 +1,259 @@
+# 🌋 Analisis Sentimen & Topik Komentar YouTube (Bencana Gunung Berapi Indonesia)
 
-# Indonesian Volcano News Sentiment Analysis: A Phase-by-Phase Walkthrough
+![Status](https://img.shields.io/badge/Status-Selesai-success)
+![Python](https://img.shields.io/badge/Python-3.9%20to%203.12-blue)
+![NLP](https://img.shields.io/badge/NLP-Supervised%20%26%20LDA-orange)
 
-## Introduction
+Proyek ini bertujuan untuk menganalisis opini dan respon publik terhadap bencana erupsi gunung berapi di Indonesia (seperti Gunung Marapi, Semeru, Merapi, Ruang, Lewotobi, dll) antara tahun 2020–2025 melalui komentar video berita YouTube nasional dan regional.
 
-This project sits at the intersection of computational linguistics, disaster communication studies, and Indonesian NLP. Your objective—collecting 90 YouTube video news items with 20 comments each (1,800 comments total) covering Indonesian volcanic eruptions from 2020–2025—creates a rich corpus for sentiment and framing analysis. Below is a detailed, actionable walkthrough for each phase.
+Sistem memadukan dua metodologi utama *Natural Language Processing* (NLP):
+1. **Supervised Machine Learning (Klasifikasi Sentimen)**: Mengklasifikasikan sentimen komentar ke dalam kategori **Positif**, **Netral**, atau **Negatif** menggunakan model yang dilatih dari data berlabel emas (*gold label*) manual.
+2. **Unsupervised Learning (Topic Modeling LDA)**: Mengekstraksi tema pembicaraan netizen (*framing issues*) tanpa supervisi manusia menggunakan algoritma *Latent Dirichlet Allocation* (LDA) yang dioptimasi dengan metrik *Topic Coherence* ($U_{mass}$) dan *Perplexity*.
 
 ---
 
-## Phase 0: Data Collection (Pre-Pipeline)
+## 📌 Penjelasan Urutan Fase Pipeline
 
-Before the four-stage NLP pipeline can begin, you need a structured corpus. This phase is foundational because the quality of your downstream analysis depends entirely on how you collect and organize the data.
+Pipeline telah dirapikan secara sekuensial (Fase 0 hingga Fase 7) untuk mencerminkan alur kerja penelitian NLP yang bersih, bebas kebocoran data (*data leakage*), dan mudah direproduksi:
 
-### 0.1 Video Selection Strategy
-
-Your target is 90 videos spanning 2020–2025. To ensure balanced coverage:
-
-- **Volcano diversity**: Aim for at least 5–8 major volcanoes (e.g., Merapi, Semeru, Sinabung, Anak Krakatau, Lewotobi Laki-laki, Raung, Dukono). The 2020–2022 Semeru eruptions and the 2025 Lewotobi Laki-laki activity are particularly well-documented in news media.
-- **News source diversity**: Include videos from major Indonesian news channels (Kompas TV, Metro TV, tvOne, CNN Indonesia, Detik, Tribun News) as well as regional channels.
-- **Temporal spread**: Distribute videos across the five-year window to capture evolving framing—early coverage (2020–2021) vs. recent coverage (2024–2025) may reveal shifts in tone.
-
-### 0.2 YouTube Comment Extraction
-
-For extracting 20 comments per video, you have several Python options. **ytscrape** is particularly suitable because it requires no API key and no quota, using YouTube's internal InnerTube API with transparent pagination and typed dataclasses. A minimal extraction pattern:
-
-```python
-from ytscrape import YouTube, CommentSort
-
-with YouTube(language="id", region="ID") as yt:
-    for comment in yt.comments(
-        "https://youtu.be/VIDEO_ID",
-        sort=CommentSort.NEWEST,
-        max_results=20
-    ):
-        print(comment.author, comment.text)
+```
+[Data Mentah YouTube]
+        │
+        ▼
+[Fase 0: Sampling & Gold Annotation] ────► data_train_labeled.csv (80%) & data_test_labeled.csv (20%)
+        │
+        ▼
+[Fase 1: Preprocessing Teks] ────────────► data/processed/comments_clean.csv (clean_light & clean_heavy)
+        │
+        ├─────────────────────────────────────────┐
+        ▼                                         ▼
+[Fase 2: Topic Modeling LDA]             [Fase 3: Visualisasi EDA]
+  - Grid search k (Coherence Umass)        - Distribusi Sentimen
+  - Label semantik topik                   - WordCloud per kelas
+        │                                         │
+        ▼                                         ▼
+[Fase 4: Training Classifier] ───────────► models/tfidf_logreg.joblib (TF-IDF + Logistic Regression)
+        │
+        ▼
+[Fase 5: Evaluasi & Benchmark] ──────────► Benchmarking vs Dummy, Lexicon, Zero-Shot & Error Analysis
+        │
+        ▼
+[Fase 6: Batch Inference] ───────────────► Pelabelan sisa korpus komentar non-anotasi
+        │
+        ▼
+[Fase 7: Final Report & Merge] ──────────► Master dataset final & grafik kontingensi (Topik x Sentimen)
 ```
 
-**tapline** is an alternative if you prefer an API-key-based approach with higher reliability and explicit credit management. The official YouTube Data API v3 is another option but comes with quota constraints.
-
-**Important consideration**: Collect top-level comments sorted by "Newest" to avoid algorithmic bias toward highly-liked comments, which may overrepresent polarizing or viral reactions. Store metadata (video title, channel, upload date, volcano name, comment count) alongside each comment.
-
-### 0.3 Data Structure
-
-Organize your data as a flat table:
-
-| comment_id | video_id | video_title | channel | upload_date | volcano | comment_text | like_count |
-| ---------- | -------- | ----------- | ------- | ----------- | ------- | ------------ | ---------- |
-
-This structure supports both sentiment analysis (per-comment) and framing analysis (per-video aggregation).
+> **Catatan Historis Mengenai Fase 2 & 3 Lama:**  
+> Pada versi awal proyek, terdapat skrip `phase2_features.py` (ekstraksi fitur manual ke format `.npz`) dan `phase3_sentiment_lexicon.py` (analisis sentimen berbasis aturan kamus). Karena proyek ditingkatkan menggunakan pendekatan **Supervised Learning dengan Gold Label** dan pipeline `scikit-learn` terintegrasi, skrip lama tersebut telah diarsipkan ke folder `script/archive/` agar alur utama menjadi linear dan tidak redundant.
 
 ---
 
-## Phase 1: Text Preprocessing
+## 📁 Struktur Direktori
 
-Preprocessing transforms raw Indonesian comment text—often informal, code-mixed, and noisy—into normalized form suitable for feature extraction. Indonesian social media text presents unique challenges: slang (e.g., "gak", "banget", "udah"), abbreviations, and code-switching with English.
-
-### 1.1 Recommended Libraries
-
-- **Sastrawi**: The de facto standard for Indonesian stemming and stopword removal. It implements the Nazief-Adriani algorithm and provides a default Indonesian stopword list including words like "yang", "di", "dari".
-- **nahiarhdNLP**: A modern, configurable pipeline library offering HTML/URL/mention removal, emoji handling, spell correction, slang normalization, stemming, and stopword removal in a single configurable pipeline.
-- **indo-text-preprocessing**: A lightweight alternative (numpy-only dependency) with 100% Sastrawi-compatible stemming at ~5× the speed, plus built-in slang dictionaries (4,534 entries) and 736 stopwords.
-
-### 1.2 Step-by-Step Preprocessing
-
-**Step 1 — Lowercasing**: Convert all text to lowercase. This is straightforward but essential for consistent token matching.
-
-**Step 2 — Contraction and Slang Expansion**: Indonesian YouTube comments are heavy on informal contractions. Build or use a slang mapping:
-
-- "gak" → "tidak"
-- "udah" → "sudah"
-- "banget" → "sangat"
-- "emangnya" → "memangnya"
-
-The `indo-text-preprocessing` library ships with a comprehensive slang dictionary derived from Kamus-Alay and colloquial Indonesian sources.
-
-**Step 3 — Punctuation and Special Character Removal**: Remove punctuation, URLs, mentions (@username), hashtags, and emojis. However, consider preserving certain punctuation for sentiment cues—excessive exclamation marks ("!!") can signal strong emotion. A hybrid approach: strip punctuation for feature extraction but retain a "punctuation_count" feature for sentiment modeling.
-
-**Step 4 — Tokenization**: Split text into word tokens. For Indonesian, simple whitespace tokenization works reasonably well, but you may need to handle hyphenated reduplication (e.g., "buku-buku" → "buku buku").
-
-**Step 5 — Stopword Removal**: Remove high-frequency function words. Sastrawi provides a default Indonesian stopword list, and `indo-text-preprocessing` offers 736 stopwords with customizable keep/remove lists.
-
-**Step 6 — Stemming vs. Lemmatization**: For Indonesian, stemming (reducing "memperbaiki" → "baik", "makananmu" → "makan") is more commonly used than lemmatization, as reliable Indonesian lemmatizers are scarce. Sastrawi's stemmer is the standard, though `indo-text-preprocessing` offers a faster, compatible alternative.
-
-**Step 7 — Spelling Correction**: Indonesian social media text contains frequent typos. A spell corrector using a dictionary of standard Indonesian words plus a slang corpus can normalize these. The `nahiarhdNLP` library provides both word-level and sentence-level spell correction.
-
-**Step 8 — Rare Word and Common Word Removal**: After building your corpus vocabulary, remove words appearing in fewer than 2 documents (rare words) and words appearing in more than 90% of documents (common words that carry little discriminative information). This step is typically applied after initial tokenization and before vectorization.
-
-### 1.3 Pipeline Configuration Example
-
-```python
-from indo_text_preprocessing import IndoPreprocessor
-
-p = IndoPreprocessor(
-    remove_url=True,
-    remove_mention=True,
-    replace_slang=True,
-    remove_stopwords=True,
-    stem=True
-)
-cleaned = p.preprocess_batch(comments_list)
+```text
+volcano-sentiment-analysis/
+├── data/
+│   ├── raw/                 # Data mentah awal (comments_raw.csv, slang_dict.txt)
+│   ├── processed/           # Data terproses (comments_clean.csv, final_analysis_dataset.csv)
+│   ├── sample_for_annotation.csv # 360 sampel acak untuk proses anotasi
+│   ├── data_train_labeled.csv    # 80% data berlabel untuk melatih model
+│   └── data_test_labeled.csv     # 20% data berlabel untuk evaluasi independen
+├── models/                  # File artefak model biner (tfidf_logreg.joblib)
+├── reports/                 # Output visualisasi dan laporan kuantitatif
+│   ├── figures/             # Gambar grafik resolusi tinggi (.png)
+│   ├── topics/              # Kata kunci topik dan tabel evaluasi koherensi LDA
+│   ├── model_comparison.csv # Tabel komparasi performa seluruh model
+│   ├── error_analysis_*.csv # Analisis kesalahan prediksi untuk kajian kualitatif
+│   ├── sentiment_by_volcano_crosstab.csv # Tabel kontingensi sentimen per gunung
+│   └── sentiment_by_topic_crosstab.csv   # Tabel kontingensi sentimen per topik
+├── script/                  # Seluruh skrip pipeline yang terurut rapi
+│   ├── phase0_sampling_and_split.py # Fase 0: Ekstraksi sampel & stratified split
+│   ├── phase1_preprocess.py         # Fase 1: Pembersihan teks media sosial
+│   ├── phase2_topic_modeling.py     # Fase 2: Topic modeling LDA & evaluasi k
+│   ├── phase3_eda_visualization.py  # Fase 3: Analisis data eksploratif & WordCloud
+│   ├── phase4_train_classifier.py   # Fase 4: Pelatihan model klasifikasi supervised
+│   ├── phase5_evaluate_model.py     # Fase 5: Evaluasi independen & error analysis
+│   ├── phase6_inference.py          # Fase 6: Prediksi batch pada korpus besar
+│   ├── phase7_final_report.py       # Fase 7: Penggabungan master & laporan akhir
+│   ├── sentiment_model.py           # Shared module untuk inferensi konsisten
+│   ├── archive/                     # Skrip eksperimen legacy (lexicon, manual features)
+│   ├── scraping/                    # Utilitas scraping data YouTube
+│   └── utils/                       # Skrip validasi integritas dataset
+├── requirements.txt         # Dependensi standar proyek
+├── requirements-deeplearning.txt # Dependensi opsional (Torch/Transformers)
+├── annotation_guidelines.md # Pedoman baku pelabelan sentimen bencana
+└── readme.md                # Dokumentasi lengkap proyek
 ```
 
-**Caveat**: Aggressive preprocessing can strip sentiment-bearing words. For sentiment analysis, consider a "light" pipeline (lowercase + slang expansion + stopword removal only) and a "heavy" pipeline (full stemming + rare word removal) for topic modeling and clustering, where lexical diversity matters less.
-
 ---
 
-## Phase 2: Feature Engineering
+## 🛠 Instalasi & Lingkungan Kerja
 
-Feature engineering converts preprocessed text into numerical representations that machine learning models can consume.
+Gunakan Virtual Environment dengan Python 3.9 s.d. 3.12:
 
-### 2.1 Term Frequency (TF) and TF-IDF
+```bash
+# 1. Buat dan aktifkan virtual environment
+python3 -m venv .venv
+source .venv/bin/activate  # Di Windows: .venv\Scripts\activate
 
-TF measures how often a term appears in a document. IDF downweights terms that appear across many documents. TF-IDF combines them: \( \text{TF-IDF}(t,d) = \text{TF}(t,d) \times \log(N / \text{DF}(t)) \). For Indonesian text classification, TF-IDF with `ngram_range=(1,2)` and `sublinear_tf=True` has proven effective.
-
-```python
-from sklearn.feature_extraction.text import TfidfVectorizer
-
-vectorizer = TfidfVectorizer(
-    ngram_range=(1, 2),
-    min_df=2,
-    max_df=0.9,
-    sublinear_tf=True
-)
-X_tfidf = vectorizer.fit_transform(cleaned_texts)
+# 2. Pasang dependensi standar
+pip install -r requirements.txt
 ```
 
-### 2.2 N-grams
-
-Bigrams and trigrams capture multi-word expressions that unigrams miss. In Indonesian, n-grams are particularly valuable for capturing fixed phrases like "gunung meletus" (volcano erupts), "status awas" (alert status), and "abu vulkanik" (volcanic ash). Research on Indonesian text shows that n-gram range up to (1,3) works well, as Indonesian uses 3-letter acronyms (e.g., "kartu tanda penduduk" → KTP).
-
-### 2.3 Bag of Words (BoW)
-
-A simple count-based representation. While TF-IDF generally outperforms BoW for classification, BoW is useful for topic modeling (LDA expects count data) and for interpretability.
-
-### 2.4 Auxiliary Features
-
-Beyond lexical features, extract:
-
-- **Word count**: Total tokens per comment
-- **Character count**: Total characters (excluding spaces)
-- **Average word length**: Mean character count per word
-- **Punctuation density**: Ratio of punctuation to total characters (sentiment proxy)
-- **Uppercase ratio**: Proportion of uppercase characters (emotional intensity proxy)
-
-These features can be concatenated with TF-IDF vectors for hybrid models.
-
-### 2.5 Document Similarity
-
-For document similarity, TF-IDF vectors can be compared using cosine similarity. For semantic similarity, consider sentence embeddings from IndoBERT or multilingual models.
-
----
-
-## Phase 3: Modeling
-
-Modeling applies statistical and machine learning algorithms to the engineered features to uncover patterns. For your project, different tasks require different modeling approaches.
-
-### 3.1 Traditional Machine Learning (for Classification and Sentiment)
-
-**Naive Bayes**: A strong baseline for Indonesian sentiment analysis, especially with TF-IDF features. It is fast, interpretable, and performs well on short text like YouTube comments.
-
-**Support Vector Machine (SVM)**: Often outperforms Naive Bayes on text classification with TF-IDF. Linear SVM with C=1 and TF-IDF (min_df=0.05, max_df=0.75, n-gram (1,2)) has been shown effective for Indonesian text.
-
-**Logistic Regression**: Provides probabilistic outputs, useful for confidence-based sentiment scoring.
-
-### 3.2 Transformer-Based Models (for Higher Accuracy)
-
-**IndoBERT**: A BERT model pre-trained on Indonesian text. Fine-tuning IndoBERT for sentiment classification typically yields F1-scores in the 80–90% range for Indonesian social media text. A study on earthquake-related YouTube comments achieved competitive results comparing BiLSTM with IndoBERT, with positive sentiment at 41.2%, negative at 35.5%, and neutral at 23.2%.
-
-```python
-from transformers import pipeline
-
-classifier = pipeline(
-    task="text-classification",
-    model="indobenchmark/indobert-base-p1"
-)
+*(Opsional)* Jika ingin menjalankan model Transformer Deep Learning (IndoBERT fine-tuning/zero-shot):
+```bash
+pip install -r requirements-deeplearning.txt
 ```
 
-**BiLSTM with FastText embeddings**: A lighter alternative to BERT, achieving strong performance on Indonesian NER tasks (F1 up to 79.64%) when combined with CRF.
+---
 
-### 3.3 Clustering
+## 🚀 Panduan Eksekusi Lengkap (Fase demi Fase)
 
-For unsupervised grouping of comments by theme or sentiment:
+Jalankan seluruh skrip dari direktori akar (*root*) proyek:
 
-- **K-Means** on TF-IDF or SVD-reduced features
-- **DBSCAN** for density-based clustering (finds arbitrarily shaped clusters, useful for identifying outlier comments)
-- **Hierarchical clustering** for dendrogram visualization
+### 1. Fase 0 — Sampling & Split Anotasi Manual
+Skrip ini mengisolasi data untuk diberi label manusia sebagai tolak ukur (*gold standard*):
+```bash
+# Tahap 1: Ekstraksi 360 baris acak terlindungi dari CSV injection
+python script/phase0_sampling_and_split.py --stage 1
 
-### 3.4 Topic Modeling
+# [Proses Pelabelan]: Tim mengisi data/sample_for_annotation.csv mengikuti annotation_guidelines.md
 
-Two approaches for Indonesian news and comments:
-
-**LDA (Latent Dirichlet Allocation)**: Probabilistic generative model that treats each document as a mixture of topics. Works well with BoW features. Fast but struggles with short texts like YouTube comments.
-
-**BERTopic**: Uses BERT embeddings and advanced clustering (HDBSCAN) to generate coherent topics. Research on Indonesian news corpora shows BERTopic outperforms LDA in topic coherence and interpretability, especially for short, unstructured text. A comparative study on Indonesian YouTube protest discourse found that LDA is faster in time metrics while BERTopic produces more coherent topics.
-
-### 3.5 Named Entity Recognition (NER)
-
-For extracting entities from news coverage, fine-tune IndoBERT for NER with entity types:
-
-- **PER** (Person): Officials, volcanologists, local residents
-- **ORG** (Organization): PVMBG, BNPB, local government
-- **LOC** (Location): Volcano names, villages, evacuation zones
-- **DIS** (Disaster-related terms): Eruption, ashfall, pyroclastic flow
-
-IndoBERT achieves best-in-class performance for Indonesian NER, particularly for disease entities (F1 79.64% in one study). For your project, you would define volcano-specific entity types.
+# Tahap 2: Validasi integritas label dan stratified split 80:20
+python script/phase0_sampling_and_split.py --stage 2
+```
+* **Input**: `data/raw/comments_raw.csv`
+* **Output**: `data/data_train_labeled.csv` (288 baris) & `data/data_test_labeled.csv` (72 baris).
 
 ---
 
-## Phase 4: Task Execution
-
-This phase applies the trained models to produce actionable insights.
-
-### 4.1 Sentiment Analysis
-
-Classify each comment as positive, negative, or neutral. For Indonesian YouTube comments on disaster news, negative and critical sentiment often dominates—a study on LPG subsidy comments found 197 negative/critical comments vs. 55 positive, with hostile sentiment at 87 comments. Expect similar patterns for volcano coverage, though framing differences across channels may produce variations.
-
-**Deliverable**: Per-comment sentiment labels, aggregated per video, per volcano, and per time period.
-
-### 4.2 Framing Analysis
-
-Framing analysis goes beyond sentiment polarity to examine how news videos frame volcanic events. Common frames:
-
-- **Disaster frame**: Focus on destruction, casualties, evacuation
-- **Scientific frame**: Focus on volcanic activity, alert levels, geological explanation
-- **Human interest frame**: Focus on residents' experiences, community response
-- **Political frame**: Focus on government response, policy, blame
-
-Combine topic modeling (BERTopic) with manual frame annotation to identify dominant frames in your corpus.
-
-### 4.3 Classification
-
-Train a classifier to predict, for example:
-
-- Volcano type from news text
-- Alert level from coverage
-- Whether a video is from a national vs. regional channel
-
-### 4.4 Clustering
-
-Cluster videos or comments by:
-
-- **Sentiment profile**: Videos with predominantly negative comments vs. mixed
-- **Topic profile**: Videos clustering around evacuation, ashfall, government response
-- **Temporal profile**: Videos from different eruption phases
-
-### 4.5 Entity Extraction
-
-Extract and link entities across videos:
-
-- **Volcano entities**: Merapi, Semeru, Sinabung, etc.
-- **Organization entities**: PVMBG, BNPB, BMKG
-- **Location entities**: Yogyakarta, Lumajang, Karo Regency
-
-Build a co-occurrence network of entities to reveal which volcanoes are associated with which organizations and locations.
-
-### 4.6 Document Similarity
-
-Compute pairwise cosine similarity between video comment sets. Videos covering the same volcano eruption from different channels should cluster together. This can reveal:
-
-- Which channels cover similar stories in similar ways
-- Which videos are outliers (unique framing)
-- How coverage of the same event evolves over time
-
-### 4.7 Topic Modeling Output
-
-For each topic, extract:
-
-- Top 10 terms (using c-TF-IDF for BERTopic)
-- Representative documents
-- Topic size and temporal distribution
-
-Interpret topics in the context of Indonesian volcano discourse: "evacuation and displacement", "ashfall and health", "government response and aid", "volcanic tourism and danger", etc.
+### 2. Fase 1 — Preprocessing Teks
+Tahap pembersihan teks bahasa Indonesia non-formal:
+- Case folding & pembersihan URL, mention, karakter berulang (*word elongation*).
+- Normalisasi kamus slang domain umum & domain bencana (`data/raw/slang_dict.txt`).
+- Demojize (konversi emoji ke deskripsi tekstual).
+- Stemming morfologis PySastrawi.
+- Stopword removal adaptif konteks bencana (menjaga kata negasi dan sentimen seperti *tidak, jangan, waspada, semoga*).
+- Menghasilkan dua representasi: `clean_light` (untuk klasifikasi) dan `clean_heavy` (untuk topic modeling).
+- Mempertahankan kolom `source_row` sebagai primary key baris asli.
+```bash
+python script/phase1_preprocess.py
+```
+* **Output**: `data/processed/comments_clean.csv`.
 
 ---
 
-## Tools and Environment Summary
-
-| Phase                  | Primary Libraries                                    |
-| ---------------------- | ---------------------------------------------------- |
-| Data Collection        | ytscrape, tapline, google-api-python-client          |
-| Preprocessing          | Sastrawi, nahiarhdNLP, indo-text-preprocessing, NLTK |
-| Feature Engineering    | scikit-learn (TfidfVectorizer, CountVectorizer)      |
-| Modeling (Traditional) | scikit-learn (NaiveBayes, SVM, LogisticRegression)   |
-| Modeling (Transformer) | transformers (IndoBERT, BERTopic)                    |
-| Topic Modeling         | gensim (LDA), BERTopic                               |
-| NER                    | transformers (IndoBERT fine-tuned), pycrfsuite       |
-| Visualization          | matplotlib, seaborn, wordcloud, pyLDAvis             |
-
-All libraries are compatible with Python 3.11 and can be run in VSCode `.ipynb` notebooks. For Google Colab, GPU acceleration is available for transformer-based models.
+### 3. Fase 2 — Topic Modeling LDA & Coherence Evaluation
+Mengekstraksi topik laten dari teks komentar `clean_heavy`:
+- Melakukan grid-search otomatis untuk jumlah topik $k \in [3, 4, 5, 6, 7]$.
+- Mengukur kualitas topik dengan **$U_{mass}$ Topic Coherence** dan **Perplexity**.
+- Memilih model terbaik ($k=5$) dan memetakan kata kunci ke label semantik tematik.
+```bash
+python script/phase2_topic_modeling.py
+# Atau spesifikasikan jumlah topik manual:
+# python script/phase2_topic_modeling.py --num-topics 5
+```
+* **Output**:
+  - `reports/figures/lda_topic_evaluation.png`: Grafik optimasi koherensi topik.
+  - `reports/topics/lda_coherence_evaluation.csv`: Tabel metrik kuantitatif.
+  - `reports/topics/lda_topics_keywords.csv`: Bobot kata kunci teratas tiap topik.
+  - `reports/topics/comments_with_topics.csv`: Dataset dengan kolom `dominant_topic` & `dominant_topic_label`.
 
 ---
 
-## Suggested Workflow Sequence
+### 4. Fase 3 — Analisis Eksploratif (EDA) & Visualisasi
+Menganalisis sebaran data dan pola linguistik:
+- Menghitung frekuensi label Positif, Netral, dan Negatif.
+- Visualisasi sebaran sentimen per gunung berapi.
+- Pembuatan WordCloud terpisah untuk masing-masing kelas sentimen.
+```bash
+python script/phase3_eda_visualization.py
+```
+* **Output**: Gambar tersimpan di `reports/figures/` (`eda_sentiment_distribution.png`, `eda_sentiment_per_volcano.png`, `wordcloud_positif.png`, `wordcloud_negatif.png`, `wordcloud_netral.png`).
 
-1. **Week 1–2**: Data collection (90 videos, 20 comments each) + metadata structuring
-2. **Week 3**: Preprocessing pipeline development and validation
-3. **Week 4**: Feature engineering + exploratory data analysis
-4. **Week 5–6**: Modeling (sentiment classifier, topic model, NER)
-5. **Week 7**: Task execution (clustering, similarity, framing analysis)
-6. **Week 8**: Interpretation, visualization, and reporting
+---
 
-This phased approach ensures that each stage builds on a validated foundation, and that you can iterate on preprocessing and feature engineering without re-running expensive modeling steps.
+### 5. Fase 4 — Pelatihan Model Klasifikasi Supervised
+Melatih model machine learning menggunakan data latih hasil anotasi:
+- Mencegah *data leakage* menggunakan `sklearn.pipeline.Pipeline` (TF-IDF Vectorizer + Logistic Regression).
+- Optimasi hiperparameter (C, ngram_range, sublinear_tf) via Stratified 5-Fold Cross Validation.
+```bash
+python script/phase4_train_classifier.py --model tfidf
+```
+* **Output**: `models/tfidf_logreg.joblib`.
+
+---
+
+### 6. Fase 5 — Evaluasi Model & Error Analysis (Benchmarking)
+Menguji performa model secara objektif pada data uji yang belum pernah dilihat (`data_test_labeled.csv`):
+```bash
+# 1. Baseline Acak (Uniform Random)
+python script/phase5_evaluate_model.py --model dummy
+
+# 2. Baseline Berbasis Aturan Kamus (InSet Lexicon)
+python script/phase5_evaluate_model.py --model lexicon
+
+# 3. Model Transformer Pre-trained Zero-Shot (Indo-RoBERTa)
+python script/phase5_evaluate_model.py --model indobert-zeroshot
+
+# 4. Model Supervised Domain-Adapted (TF-IDF + Logistic Regression)
+python script/phase5_evaluate_model.py --model tfidf
+```
+* **Output**:
+  - Matriks kebingungan (*Confusion Matrix*) di `reports/figures/confusion_matrix_<model>.png`.
+  - Ekspor komentar yang salah diprediksi untuk analisis kualitatif di `reports/error_analysis_<model>.csv`.
+  - Tabel perbandingan seluruh metrik di `reports/model_comparison.csv`.
+
+---
+
+### 7. Fase 6 — Batch Inference pada Seluruh Dataset
+Mengaplikasikan model supervised yang telah teruji ke seluruh data komentar non-anotasi:
+- Menjaga data gold label asli agar tidak tertimpa.
+- Memetakan hasil klasifikasi kembali ke indeks baris asli (`source_row`).
+```bash
+python script/phase6_inference.py --model tfidf
+```
+* **Output**: `data/processed/comments_with_sentiment.csv`.
+
+---
+
+### 8. Fase 7 — Penggabungan Master & Laporan Akhir
+Mengintegrasikan hasil analisis sentimen (Fase 6) dan pemodelan topik (Fase 2) menjadi satu tabel terpadu:
+- Penggabungan aman dengan validasi kardinalitas `many_to_one` berbasis `source_row`.
+- Menghasilkan tabel kontingensi (crosstab) antara topik dan sentimen, serta gunung dan sentimen.
+- Memproduksi visualisasi komprehensif untuk laporan/publikasi ilmiah.
+```bash
+python script/phase7_final_report.py
+```
+* **Output**:
+  - `data/processed/final_analysis_dataset.csv` (Master Dataset Final)
+  - `reports/sentiment_by_volcano_crosstab.csv`
+  - `reports/sentiment_by_topic_crosstab.csv`
+  - `reports/figures/final_sentiment_per_volcano.png`
+  - `reports/figures/final_sentiment_per_topic.png`
+  - `reports/figures/final_topic_distribution.png`
+
+---
+
+## 📊 Hasil Evaluasi & Temuan Kunci
+
+### Tabel Komparasi Model (Benchmark pada Data Uji $n=72$)
+
+| Model | Pendekatan | Akurasi | Macro Precision | Macro Recall | **Macro F1** |
+| :--- | :--- | :---: | :---: | :---: | :---: |
+| **Dummy Random** | Baseline Heuristik | 45.83% | 0.4591 | 0.4516 | **0.4528** |
+| **InSet Lexicon** | Unsupervised Rule-Based | 41.67% | 0.4792 | 0.4434 | **0.4134** |
+| **Indo-RoBERTa** | Zero-Shot Transformer | 48.61% | 0.4741 | 0.4659 | **0.4656** |
+| **TF-IDF + LogReg** | **Supervised Domain-Adapted** | **61.11%** | **0.6202** | **0.6015** | **0.6072** |
+
+### Analisis Temuan:
+1. **Pentingnya Adaptasi Domain Bencana**:  
+   Model lexicon dan model zero-shot pra-latih gagal menangani nuansa teks bencana alam Indonesia, di mana kata-kata seperti *"azab"*, *"innalillahi"*, *"merinding"*, atau doa keselamatan kerap disalahartikan. Model **TF-IDF + Logistic Regression** yang dilatih secara supervised melampaui lexicon sebesar **+19.4% Macro F1**.
+2. **Kesesuaian Tema Topik LDA ($k=5$)**:  
+   Optimasi nilai $U_{mass}$ Coherence membuktikan $k=5$ menghasilkan skor koherensi tertinggi (-84.09), membedakan 5 dimensi diskursus publik:
+   - **Topik 1 (Kondisi Wilayah & Akses Jalan)**: Kerusakan infrastruktur dan penutupan jalur evakuasi.
+   - **Topik 2 (Respon Publik & Berita Bencana)**: Update informasi terkini dan tayangan video erupsi.
+   - **Topik 3 (Refleksi Religius & Bencana Alam)**: Persepsi bencana sebagai peringatan spiritual / azab.
+   - **Topik 4 (Ketakutan Gempa & Erupsi Berulang)**: Kecemasan warga terhadap getaran seismik dan abu vulkanik.
+   - **Topik 5 (Doa Keselamatan & Solidaritas Korban)**: Ungkapan empati, doa perlindungan, dan dukungan moril.
